@@ -5,7 +5,9 @@ import dash_cytoscape as cyto
 import requests
 
 MENU_WIDTH = 0
-API_URL = "http://127.0.0.1:8000/api/"
+API_ROOT = "http://127.0.0.1:8000/api/"
+API_MODELS = "models/"
+API_QUALELEMENTS = "qualelements/"
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
@@ -19,9 +21,14 @@ app.layout = html.Div(children=[
                 className="m-3",
             ),
             dbc.Button(
-                id=(ADD_MODEL_OPEN := "load-model-open"),
+                id=(ADD_MODEL_OPEN := "add-model-open"),
                 className="mx-3",
                 children="Create new model"
+            ),
+            dbc.Button(
+                id=(ADD_ELEMENT_OPEN := "add-element-open"),
+                className="m-3",
+                children="Add an element",
             ),
         ]
     ),
@@ -61,6 +68,23 @@ app.layout = html.Div(children=[
             ]),
         ],
     ),
+    dbc.Modal(
+        id=(ADD_ELEMENT_MODAL := "add-element-modal"),
+        is_open=False,
+        children=[
+            dbc.ModalHeader("Create new element"),
+            dbc.ModalBody([
+                dbc.InputGroup(
+                    className="mb-2",
+                    children=[dbc.InputGroupText("Name"), dbc.Input(id=(ADD_ELEMENT_LABEL := "add-element-label"))],
+                ),
+                dbc.Button(
+                    id=(ADD_ELEMENT_SUBMIT := "add-element-submit"),
+                    children="Submit"
+                ),
+            ]),
+        ],
+    ),
 ])
 
 
@@ -77,6 +101,18 @@ def add_model_modal(open_clicks, submit_clicks, is_open):
 
 
 @callback(
+    Output(ADD_ELEMENT_MODAL, "is_open"),
+    Input(ADD_ELEMENT_OPEN, "n_clicks"),
+    Input(ADD_ELEMENT_SUBMIT, "n_clicks"),
+    State(ADD_ELEMENT_MODAL, "is_open"),
+)
+def add_element_modal(open_clicks, submit_clicks, is_open):
+    if open_clicks or submit_clicks:
+        return not is_open
+    return is_open
+
+
+@callback(
     Output(ADD_MODEL_LABEL, "value"),
     Output(MODEL_INPUT, "options"),
     Output(MODEL_INPUT, "value"),
@@ -85,7 +121,7 @@ def add_model_modal(open_clicks, submit_clicks, is_open):
 )
 def create_model(n_clicks, label):
     if n_clicks is None:
-        models = requests.get(API_URL + "models").json()
+        models = requests.get(API_ROOT + "models").json()
         return (
             None,
             [
@@ -95,8 +131,8 @@ def create_model(n_clicks, label):
             models[0].get("id")
         )
     data = {"label": label}
-    requests.post(API_URL + "models/", data=data)
-    models = requests.get(API_URL + "models").json()
+    requests.post(API_ROOT + "models/", data=data)
+    models = requests.get(API_ROOT + "models/").json()
     return (
         None,
         [
@@ -105,6 +141,35 @@ def create_model(n_clicks, label):
         ],
         models[-1].get("id")
     )
+
+
+@callback(
+    Output("cyto", "elements"),
+    Input(ADD_ELEMENT_SUBMIT, "n_clicks"),
+    Input(MODEL_INPUT, "value"),
+    State(ADD_ELEMENT_LABEL, "value"),
+)
+def redraw_map(add_element_clicks, model_id, element_label):
+    if add_element_clicks is None:
+        raise PreventUpdate
+    data = {"label": element_label}
+    requests.post(API_ROOT + API_QUALELEMENTS, data)
+    qualelements = requests.get(API_ROOT + API_QUALELEMENTS).json()
+    cyto_elements = []
+    cyto_elements.extend([
+        {
+            "data":
+                {
+                    "id": str(obj.get("id")),
+                    "label": obj.get("label")
+                },
+            "position": {"x": 0, "y": 0},
+            "classes": "qualelement"
+        }
+        for obj in qualelements
+    ])
+
+    return cyto_elements
 
 
 if __name__ == '__main__':
