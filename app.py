@@ -1,4 +1,4 @@
-from dash import Dash, html, dcc, callback, Output, Input, State
+from dash import Dash, html, dcc, callback, Output, Input, State, ctx
 from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
 import dash_cytoscape as cyto
@@ -8,6 +8,8 @@ MENU_WIDTH = 0
 API_ROOT = "http://127.0.0.1:8000/api/"
 API_MODELS = "models/"
 API_QUALELEMENTS = "qualelements/"
+API_LAYOUTS = "layouts/"
+API_QUALPOSITIONS = "qualelementpositions/"
 
 app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 
@@ -18,6 +20,10 @@ app.layout = html.Div(children=[
         children=[
             dbc.Select(
                 id=(MODEL_INPUT := "model-input"),
+                className="m-3",
+            ),
+            dbc.Select(
+                id=(LAYOUT_INPUT := "layout-input"),
                 className="m-3",
             ),
             dbc.Button(
@@ -42,7 +48,7 @@ app.layout = html.Div(children=[
         },
         children=cyto.Cytoscape(
             id="cyto",
-            # layout={"name": "preset", "fit": False},
+            layout={"name": "preset"},
             style={"height": "100vh", "background-color": "#f8f9fc"},
             # stylesheet=stylesheet,
             # minZoom=0.2,
@@ -89,6 +95,21 @@ app.layout = html.Div(children=[
 
 
 @callback(
+    Output(LAYOUT_INPUT, "options"),
+    Output(LAYOUT_INPUT, "value"),
+    Input(MODEL_INPUT, "value"),
+)
+def layout_options(model_id):
+    layouts = requests.get(API_ROOT + API_LAYOUTS + f"?model_id={model_id}").json()
+    options = [
+        {"value": layout.get("id"), "label": layout.get("label")}
+        for layout in layouts
+    ]
+    value = requests.get(API_ROOT + API_MODELS + str(model_id)).json().get("default_layout_id")
+    return options, value
+
+
+@callback(
     Output(ADD_MODEL_MODAL, "is_open"),
     Input(ADD_MODEL_OPEN, "n_clicks"),
     Input(ADD_MODEL_SUBMIT, "n_clicks"),
@@ -130,8 +151,14 @@ def create_model(n_clicks, label):
             ],
             models[0].get("id")
         )
-    data = {"label": label}
-    requests.post(API_ROOT + "models/", data=data)
+    new_model = requests.post(API_ROOT + "models/", data={"label": label}).json()
+    print(f"{new_model=}")
+    data = {"label": "default", "model_id": new_model.get("id")}
+    default_layout = requests.post(API_ROOT + API_LAYOUTS, data=data).json()
+    print(f"{default_layout=}")
+    data = {"default_layout_id": default_layout.get("id")}
+    requests.put(API_ROOT + API_MODELS, params={"id": new_model.get("id")}, data=data)
+
     models = requests.get(API_ROOT + "models/").json()
     return (
         None,
@@ -146,29 +173,35 @@ def create_model(n_clicks, label):
 @callback(
     Output("cyto", "elements"),
     Input(ADD_ELEMENT_SUBMIT, "n_clicks"),
-    Input(MODEL_INPUT, "value"),
+    Input(LAYOUT_INPUT, "value"),
     State(ADD_ELEMENT_LABEL, "value"),
 )
-def redraw_map(add_element_clicks, model_id, element_label):
-    if add_element_clicks is None:
+def redraw_map(add_element_clicks, layout_id, element_label):
+    if layout_id is None:
         raise PreventUpdate
-    data = {"label": element_label}
-    requests.post(API_ROOT + API_QUALELEMENTS, data)
-    qualelements = requests.get(API_ROOT + API_QUALELEMENTS).json()
+    if ctx.triggered_id == ADD_ELEMENT_SUBMIT:
+        print("adding")
+        data = {"label": element_label}
+        requests.post(API_ROOT + API_QUALELEMENTS, data)
+
+    params = {"layout_id": layout_id}
+    qualpositions = requests.get(API_ROOT + API_QUALPOSITIONS, params=params).json()
+    print(f"{qualpositions=}")
+
     cyto_elements = []
     cyto_elements.extend([
         {
             "data":
                 {
-                    "id": str(obj.get("id")),
-                    "label": obj.get("label")
+                    "id": str(obj.get("element").get("id")),
+                    "label": obj.get("element").get("label"),
                 },
-            "position": {"x": 0, "y": 0},
+            "position": {"x": obj.get("x"), "y": obj.get("y")},
             "classes": "qualelement"
         }
-        for obj in qualelements
+        for obj in qualpositions
     ])
-
+    print(f"{cyto_elements=}")
     return cyto_elements
 
 
